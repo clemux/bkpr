@@ -389,6 +389,41 @@ fn native_hint(actions: &[Action], mode: InputMode, context: Context) -> Option<
     (!description.is_empty()).then_some((description, priority))
 }
 
+fn forwards_key(actions: &[Action], key: &KeyWithModifier) -> bool {
+    let [
+        Action::Write {
+            key_with_modifier,
+            bytes,
+            ..
+        },
+    ] = actions
+    else {
+        return false;
+    };
+    if let Some(forwarded) = key_with_modifier {
+        return forwarded == key;
+    }
+    if !key.key_modifiers.is_empty() {
+        return false;
+    }
+    let mut character = [0; 4];
+    let expected: &[u8] = match key.bare_key {
+        BareKey::Char(value) => value.encode_utf8(&mut character).as_bytes(),
+        BareKey::Enter => b"\r",
+        BareKey::Up => b"\x1b[A",
+        BareKey::Down => b"\x1b[B",
+        BareKey::Right => b"\x1b[C",
+        BareKey::Left => b"\x1b[D",
+        BareKey::Home => b"\x1b[H",
+        BareKey::End => b"\x1b[F",
+        BareKey::Delete => b"\x1b[3~",
+        BareKey::PageUp => b"\x1b[5~",
+        BareKey::PageDown => b"\x1b[6~",
+        _ => return false,
+    };
+    bytes == expected
+}
+
 fn local_hint(
     hints: &mut Vec<Hint>,
     bindings: &Bindings,
@@ -402,8 +437,12 @@ fn local_hint(
         if ctrl {
             key = key.with_ctrl_modifier();
         }
-        // Even NoOp is an interception. Unbound keys in Locked/Normal reach the plugin editor.
-        if bindings.iter().any(|(bound, _)| *bound == key) {
+        // Explicit writes of this key reach the plugin just like unbound Locked
+        // input. Other bindings, including NoOp and writes of another key, intercept it.
+        if bindings
+            .iter()
+            .any(|(bound, actions)| *bound == key && !forwards_key(actions, &key))
+        {
             continue;
         }
         add_hint(hints, key_name(&key), description.to_owned(), priority);
@@ -1179,6 +1218,40 @@ mod tests {
                 .flat_map(|hint| &hint.keys)
                 .any(|key| key == "Enter")
         );
+    }
+
+    #[test]
+    fn explicit_key_forwarding_keeps_sidebar_hints() {
+        let forward = |bytes: &[u8]| Action::Write {
+            key_with_modifier: None,
+            bytes: bytes.to_vec(),
+            is_kitty_keyboard_protocol: false,
+        };
+        let info = mode(
+            InputMode::Normal,
+            &[
+                ("n", vec![forward(b"n")]),
+                ("Up", vec![forward(b"\x1b[A")]),
+                ("Enter", vec![forward(b"\r")]),
+                ("Home", vec![forward(b"\x1b[H")]),
+                ("r", vec![forward(b"x")]),
+                ("x", vec![forward(b"x"), switch(InputMode::Locked)]),
+            ],
+        );
+        let found = hints(view(&info), Context::Sidebar { selected: true });
+        let description = |key: &str| {
+            found
+                .iter()
+                .find(|hint| hint.keys.iter().any(|candidate| candidate == key))
+                .map(|hint| hint.description.as_str())
+        };
+        assert_eq!(description("n"), Some("new workspace"));
+        assert_eq!(description("↑"), Some("select"));
+        assert_eq!(description("Enter"), Some("activate"));
+        assert_eq!(description("Home"), Some("first / last"));
+        assert_eq!(description("r"), None);
+        assert_eq!(description("x"), None);
+        assert!(hints(view(&info), Context::Application).is_empty());
     }
 
     #[test]

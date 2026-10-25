@@ -421,9 +421,11 @@ impl Frontend {
                 context.locked
             }
         });
+        // Sidebar controls run Locked so unbound keys reach the plugin. Unlocking
+        // from the sidebar hands keyboard focus back to the application.
         let leave_control = self.granted
             && self.keyboard_control
-            && mode == InputMode::Locked
+            && mode != InputMode::Locked
             && self.mode_intent.is_none()
             && self.modal.is_none()
             && !self.finder.is_open();
@@ -621,7 +623,7 @@ impl Frontend {
         self.local_selection = true;
         self.refresh_tooltip();
         set_selectable(true);
-        self.request_mode(InputMode::Normal);
+        self.request_mode(InputMode::Locked);
         focus_plugin_pane(self.id, false, false);
     }
 
@@ -1633,12 +1635,12 @@ impl Frontend {
     fn modal_key(&mut self, key: KeyWithModifier) {
         if key.bare_key == BareKey::Esc {
             self.modal = None;
-            self.request_mode(InputMode::Normal);
+            self.request_mode(InputMode::Locked);
             return;
         }
         if matches!(self.modal, Some(Modal::Close { .. })) && key.bare_key == BareKey::Char('n') {
             self.modal = None;
-            self.request_mode(InputMode::Normal);
+            self.request_mode(InputMode::Locked);
             return;
         }
         if key.bare_key == BareKey::Enter
@@ -1677,7 +1679,7 @@ impl Frontend {
                     Item::Pane(pane_id) => Action::ClosePane { pane_id },
                 },
             };
-            self.request_mode(InputMode::Normal);
+            self.request_mode(InputMode::Locked);
             self.enqueue(action);
             return;
         }
@@ -1735,6 +1737,23 @@ impl Frontend {
         if self.modal.is_some() {
             self.modal_key(key);
             self.refresh_tooltip();
+            return;
+        }
+        // Locked sidebar controls own the keys that Normal-mode bindings used to provide.
+        if key.has_no_modifiers() && key.bare_key == BareKey::Esc {
+            self.leave_control(true);
+            return;
+        }
+        if key.has_no_modifiers() && key.bare_key == BareKey::Tab {
+            focus_next_pane();
+            return;
+        }
+        if key.is_key_with_shift_modifier(BareKey::Tab) {
+            focus_previous_pane();
+            return;
+        }
+        if key.is_key_with_ctrl_modifier(BareKey::Char('d')) {
+            detach();
             return;
         }
         if key.key_modifiers.contains(&KeyModifier::Ctrl)
@@ -3254,12 +3273,12 @@ mod tests {
     #[test]
     fn optimistic_guide_mode_does_not_acknowledge_host_mode_or_sidebar_focus() {
         let mut frontend = popup_frontend();
-        frontend.update(keybinds_event(&guide_mode(InputMode::Locked)));
-        frontend.update(mode_event(guide_mode(InputMode::Locked)));
+        frontend.update(keybinds_event(&guide_mode(InputMode::Normal)));
+        frontend.update(mode_event(guide_mode(InputMode::Normal)));
         frontend.synchronize_focus();
         frontend.enter_control();
-        assert_eq!(frontend.mode.as_ref().unwrap().mode, InputMode::Locked);
-        assert_eq!(frontend.guide_mode(), Some(InputMode::Normal));
+        assert_eq!(frontend.mode.as_ref().unwrap().mode, InputMode::Normal);
+        assert_eq!(frontend.guide_mode(), Some(InputMode::Locked));
         assert!(!frontend.control_has_focus);
         let immediate = sidebar_cells(&mut frontend, 20, 40);
         assert!(
@@ -3267,19 +3286,19 @@ mod tests {
                 .iter()
                 .flatten()
                 .collect::<String>()
-                .contains("Unlocked · Sidebar")
+                .contains("Locked · Sidebar")
         );
-        assert!(!frontend.update(mode_event(guide_mode(InputMode::Locked))));
+        assert!(!frontend.update(mode_event(guide_mode(InputMode::Normal))));
         host_focus(&mut frontend, PaneId::Terminal(1));
         assert!(frontend.keyboard_control);
         assert!(!frontend.control_has_focus);
         assert_eq!(sidebar_cells(&mut frontend, 20, 40), immediate);
-        assert!(frontend.update(mode_event(guide_mode(InputMode::Normal))));
+        assert!(frontend.update(mode_event(guide_mode(InputMode::Locked))));
         assert!(frontend.mode_intent.is_none());
         assert!(!frontend.control_has_focus);
         host_focus(&mut frontend, PaneId::Plugin(99));
         assert!(frontend.control_has_focus);
-        assert!(frontend.update(mode_event(guide_mode(InputMode::Locked))));
+        assert!(frontend.update(mode_event(guide_mode(InputMode::Normal))));
         assert!(!frontend.keyboard_control);
     }
 
@@ -3357,7 +3376,7 @@ mod tests {
     }
 
     #[test]
-    fn locked_mode_still_leaves_controls_but_keeps_a_modal_active() {
+    fn unlocking_leaves_controls_but_keeps_a_modal_active() {
         for modal in [false, true] {
             let mut frontend = popup_frontend();
             frontend.keyboard_control = true;
@@ -3369,7 +3388,7 @@ mod tests {
                     input: ui::Input::new("name".to_owned()),
                 });
             }
-            assert!(frontend.update(mode_event(guide_mode(InputMode::Locked))));
+            assert!(frontend.update(mode_event(guide_mode(InputMode::Normal))));
             assert_eq!(frontend.keyboard_control, modal);
             assert_eq!(frontend.control_has_focus, modal);
             assert_eq!(frontend.modal.is_some(), modal);
@@ -3386,9 +3405,9 @@ mod tests {
         frontend.update(keybinds_event(&guide_mode(InputMode::Locked)));
         sidebar_cells(&mut frontend, 16, 24);
         let application_height = frontend.tree_height();
-        frontend.keyboard_control = true;
-        frontend.control_has_focus = true;
-        assert!(frontend.update(mode_event(guide_mode(InputMode::Normal))));
+        frontend.enter_control();
+        frontend.update(mode_event(guide_mode(InputMode::Locked)));
+        frontend.reconcile_viewport(false);
         let sidebar_height = frontend.tree_height();
         assert!(sidebar_height < application_height);
 
@@ -3417,8 +3436,8 @@ mod tests {
         frontend.tabs[0].display_area_columns = 48;
         frontend.keyboard_control = true;
         frontend.control_has_focus = true;
-        frontend.update(mode_event(guide_mode(InputMode::Normal)));
-        frontend.update(keybinds_event(&guide_mode(InputMode::Normal)));
+        frontend.update(mode_event(guide_mode(InputMode::Locked)));
+        frontend.update(keybinds_event(&guide_mode(InputMode::Locked)));
         let baseline = sidebar_cells(&mut frontend, 12, 24);
         let item = frontend.tree_cache[..frontend.tree_height()]
             .iter()
@@ -3992,6 +4011,19 @@ mod tests {
         hover_item(&mut frontend, &Item::Pane("terminal_1".to_owned()));
         assert!(frontend.tooltip.pending.as_ref().unwrap().visible);
         assert_eq!(sidebar_cells(&mut frontend, 20, 40), baseline);
+    }
+
+    #[test]
+    fn locked_sidebar_controls_handle_their_own_exit() {
+        let mut frontend = popup_frontend();
+        sidebar_focus(&mut frontend, true);
+        frontend.key(KeyWithModifier::new(BareKey::Char('n')));
+        assert!(matches!(frontend.modal, Some(Modal::Create { .. })));
+        frontend.key(KeyWithModifier::new(BareKey::Esc));
+        assert!(frontend.modal.is_none());
+        assert!(frontend.keyboard_control);
+        frontend.key(KeyWithModifier::new(BareKey::Esc));
+        assert!(!frontend.keyboard_control);
     }
 
     #[test]

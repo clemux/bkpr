@@ -426,6 +426,7 @@ fn hints(mode: Mode<'_>, context: Context) -> Vec<Hint> {
         match context {
             Context::Application => {}
             Context::Sidebar { selected } => {
+                local(&[Esc], false, "return to app", 0);
                 local(&[Char('/')], false, "find panes", 5);
                 local(&[Up, Down, Char('j'), Char('k')], false, "select", 10);
                 if selected {
@@ -1179,6 +1180,24 @@ mod tests {
                 .flat_map(|hint| &hint.keys)
                 .any(|key| key == "Enter")
         );
+    }
+
+    #[test]
+    fn locked_sidebar_controls_list_plugin_keys_and_both_exits() {
+        let info = mode(InputMode::Locked, &[("Ctrl Space", vec![toggle()])]);
+        let found = hints(view(&info), Context::Sidebar { selected: true });
+        let keys = |description: &str| {
+            found
+                .iter()
+                .find(|hint| hint.description == description)
+                .map(|hint| hint.keys.clone())
+        };
+        assert_eq!(
+            keys("return to app"),
+            Some(vec!["Ctrl+Space".to_owned(), "Esc".to_owned()])
+        );
+        assert_eq!(keys("new workspace"), Some(vec!["n".to_owned()]));
+        assert_eq!(keys("activate"), Some(vec!["Enter".to_owned()]));
     }
 
     #[test]

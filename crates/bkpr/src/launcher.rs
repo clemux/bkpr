@@ -749,6 +749,29 @@ keybinds {
     normal {
         bind "Ctrl Space" { MessagePlugin { name "bkpr-controls"; payload "toggle"; }; }
         bind "Esc" { MessagePlugin { name "bkpr-controls"; payload "leave"; }; SwitchToMode "Locked"; }
+        // With Locked as default_mode, unbound Normal keys become NoOp. Forward
+        // sidebar controls to the focused pane explicitly; editor input uses Locked.
+        bind "n" { Write 110; }
+        bind "N" { Write 78; }
+        bind "/" { Write 47; }
+        bind "j" { Write 106; }
+        bind "k" { Write 107; }
+        bind "Up" { Write 27 91 65; }
+        bind "Down" { Write 27 91 66; }
+        bind "Enter" { Write 13; }
+        bind "Left" { Write 27 91 68; }
+        bind "Right" { Write 27 91 67; }
+        bind "Space" { Write 32; }
+        bind "r" { Write 114; }
+        bind "x" { Write 120; }
+        bind "Del" { Write 27 91 51 126; }
+        bind "R" { Write 82; }
+        bind "g" { Write 103; }
+        bind "G" { Write 71; }
+        bind "Home" { Write 27 91 72; }
+        bind "End" { Write 27 91 70; }
+        bind "PageUp" { Write 27 91 53 126; }
+        bind "PageDown" { Write 27 91 54 126; }
         bind "Tab" { FocusNextPane; }
         bind "Shift Tab" { FocusPreviousPane; }
         bind "Ctrl d" { Detach; }
